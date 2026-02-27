@@ -9,8 +9,7 @@ full_page.png
 =======
 .env
 __pycache__/
-hotel_images/
-categories/
+media_assets/
 results.json
 scraper.log
 *.png
