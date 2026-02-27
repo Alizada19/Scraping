@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 BKP/
 categories/
 hotel_images/
@@ -5,3 +6,12 @@ hotel_images/
 .venv
 __pycache__/
 full_page.png
+=======
+.env
+__pycache__/
+hotel_images/
+categories/
+results.json
+scraper.log
+*.png
+>>>>>>> 123656e7f37b1b0153f9fba9e62ac7eb4eb7189c
