@@ -1,0 +1,7 @@
+BKP/
+categories/
+hotel_images/
+.vscode
+.venv
+__pycache__/
+full_page.png
