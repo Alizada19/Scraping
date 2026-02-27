@@ -124,7 +124,7 @@ class ExxenScraper:
 
     async def run(self, limit_categories: Optional[int] = None):
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=[
+            browser = await p.chromium.launch(headless=False, args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage"
@@ -254,6 +254,7 @@ class ExxenScraper:
                 await page.wait_for_load_state("networkidle")
 
                 await self.scrape_item_details(page, category_id)
+                print("###########################################")
 
                 await page.go_back()
                 try:
