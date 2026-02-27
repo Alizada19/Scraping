@@ -9,7 +9,7 @@ from playwright.async_api import async_playwright, Page
 from playwright_stealth import Stealth
 from dotenv import load_dotenv
 
-# Load environment variables from .env file (database host, user, pass, etc.)
+# Load environment variables from .env file
 load_dotenv()
 
 # --- CONFIGURATION ---
@@ -17,9 +17,8 @@ BASE_URL = "https://www.exxen.com/"
 MEDIA_DIR = "media_assets"
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
-# --- DATABASE FUNCTIONS ---
-
-def get_db_connection():
+#postgresql connection
+def get_connection2():
     """Returns a connection to the PostgreSQL database using environment variables."""
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"),
@@ -29,50 +28,69 @@ def get_db_connection():
         port=os.getenv("DB_PORT", "5432")
     )
 
-def save_category(name):
-    """Saves a category to the database and returns its unique ID."""
+#save data in postgresql
+def saveCategory(name):
+    """
+    Inserts a category into the categories table if it doesn't exist,
+    and returns its id for linking with items.
+    """
     try:
-        conn = get_db_connection()
+        conn = get_connection2()
         cur = conn.cursor()
-        # Insert if it doesn't exist, ignore otherwise
-        cur.execute("""
-            INSERT INTO categories (category_name)
-            VALUES (%s)
-            ON CONFLICT (category_name) DO NOTHING
-            RETURNING id;
-        """, (name,))
+
+        # Insert category or do nothing if it exists, then return its id
+        query = """
+        INSERT INTO categories (category_name)
+        VALUES (%s)
+        ON CONFLICT (category_name) DO NOTHING
+        RETURNING id;
+        """
+
+        cur.execute(query, (name,))
         result = cur.fetchone()
 
-        # If it already existed, fetch its ID
-        if not result:
+        if result:
+            category_id = result[0]  # ID from INSERT
+        else:
+            # Category already exists → fetch id
             cur.execute("SELECT id FROM categories WHERE category_name = %s", (name,))
-            result = cur.fetchone()
+            category_id = cur.fetchone()[0]
 
-        category_id = result[0]
         conn.commit()
         cur.close()
         conn.close()
         return category_id
     except Exception as e:
-        print(f"Database error (save_category): {e}. Falling back to random ID.")
+        print(f"Database error (saveCategory): {e}. Falling back to random ID for local save.")
         return random.randint(1000, 9999)
 
-def save_item(category_id, data):
-    """Saves item details to the database or appends to a local JSON file if DB fails."""
+########
+#save data in postgresql
+def saveItems(cateId, data):
+    """
+    Saves item details to the database or appends to a local JSON file if DB fails.
+    """
     try:
-        conn = get_db_connection()
+        conn = get_connection2()
         cur = conn.cursor()
-        # Insert the item and its JSON details
-        cur.execute("""
+
+        title = data["title"]
+        details = data["details"]
+        json_data = json.dumps(details)
+
+        query = """
             INSERT INTO items (category_id, title, details)
             VALUES (%s, %s, %s)
-            ON CONFLICT (category_id, title) DO NOTHING;
-        """, (category_id, data["title"], json.dumps(data["details"])))
+            ON CONFLICT (category_id, title)
+            DO NOTHING;
+        """
+
+        cur.execute(query, (cateId, title, json_data))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"Database error (save_item): {e}. Saving data to results.json instead.")
+        print(f"Database error (saveItems): {e}. Saving to local results.json instead.")
         results = []
         if os.path.exists("results.json"):
             try:
@@ -80,17 +98,16 @@ def save_item(category_id, data):
                     results = json.load(f)
             except: pass
 
-        results.append({"category_id": category_id, **data})
+        results.append({"category_id": cateId, **data})
         with open("results.json", "w", encoding="utf-8") as f:
             json.dump(results, f, indent=4, ensure_ascii=False)
 
 # --- SCRAPING FUNCTIONS ---
 
 async def scroll_page(page: Page):
-    """Slowly scrolls down the page to ensure all dynamic content and lazy images are loaded."""
+    """Slowly scrolls down the page to trigger lazy loading."""
     await page.evaluate("""
         async () => {
-            // Scroll down in steps to trigger lazy loading
             for (let i = 0; i < 8; i++) {
                 window.scrollBy(0, 600);
                 await new Promise(r => setTimeout(r, 250));
@@ -98,8 +115,8 @@ async def scroll_page(page: Page):
         }
     """)
 
-async def download_media(page: Page, locator, prefix):
-    """Identifies and downloads the highest resolution image found in the given locator."""
+async def downloadMedia(page: Page, locator, prefix):
+    """Identifies and downloads the highest resolution image."""
     try:
         img = locator.locator("img").first
         if not await img.is_visible(): return None
@@ -112,11 +129,10 @@ async def download_media(page: Page, locator, prefix):
 
         if not src: return None
 
-        # Form full URL and download the file
         url = urljoin(page.url, src)
         response = await page.context.request.get(url)
         if response.ok:
-            # Clean extension from URL query params
+            # Get extension
             ext = os.path.splitext(urlparse(url).path)[1].split('?')[0] or ".jpg"
             filename = f"{prefix}_{uuid.uuid4().hex[:8]}{ext}"
 
@@ -125,19 +141,23 @@ async def download_media(page: Page, locator, prefix):
                 f.write(await response.body())
             return filepath
     except Exception as e:
-        print(f"Media download failed for {prefix}: {e}")
+        print(f"Media download failed: {e}")
     return None
 
-async def scrape_item_details(page: Page, category_id, item_image_path=None):
-    """Extracts text metadata (year, category, part) and description from a content page."""
+#########################################################3
+#child page
+async def childPage(page: Page, category_id, item_image_path=None):
+    """
+    Scrapes metadata and description from an item detail page.
+    """
     try:
-        # Extract title from the specific header location
-        title = await page.locator('#main-app main p span').first.inner_text(timeout=5000)
+        # Title
+        title_span = page.locator('#main-app main p span').first
+        title = await title_span.inner_text(timeout=5000)
 
-        # Extract metadata spans (Year, Genre, Season Info)
-        meta_loc = page.locator('#main-app main div div div div span')
-        # Filter only non-empty strings
-        texts = [t.strip() for t in await meta_loc.all_inner_texts() if t.strip()]
+        # Metadata (Year, Category, Seasons)
+        meta_spans = page.locator('#main-app main div div div div span')
+        texts = [t.strip() for t in await meta_spans.all_inner_texts() if t.strip()]
 
         details = {
             "year": "N/A",
@@ -146,67 +166,60 @@ async def scrape_item_details(page: Page, category_id, item_image_path=None):
             "description": [],
             "image_path": item_image_path
         }
+
         for t in texts:
             if t.isdigit() and len(t) == 4:
                 details["year"] = t
             elif "Season" in t or "Part" in t:
                 details["part"] = t
             elif t not in ["•", "|", "/"] and t != title:
-                # If it's not a separator or the title, it's likely the category
                 if details["category"] == "N/A": details["category"] = t
 
-        # Extract multi-paragraph description
-        # Targets the div containing description paragraphs
-        desc_loc = page.locator('#main-app main div[class*="Spacing/md"] p')
-        if await desc_loc.count() == 0:
-            # Fallback to the original XPath if CSS fails
-            desc_loc = page.locator('xpath=//*[@id="main-app"]/div[2]/main/div[2]/p')
+        # Description paragraphs
+        desc_p = page.locator('#main-app main div[class*="Spacing/md"] p')
+        if await desc_p.count() == 0:
+            desc_p = page.locator('xpath=//*[@id="main-app"]/div[2]/main/div[2]/p')
 
-        # Filter for meaningful paragraphs (longer than 20 chars)
-        details["description"] = [p.strip() for p in await desc_loc.all_inner_texts() if len(p.strip()) > 20]
+        paragraphs = await desc_p.all_inner_texts()
+        details["description"] = [p.strip() for p in paragraphs if len(p.strip()) > 20]
 
+        data = {"title": title, "details": details}
         print(f"Scraped item: {title}")
-        save_item(category_id, {"title": title, "details": details})
+        saveItems(category_id, data)
+
     except Exception as e:
         print(f"Failed to scrape details: {e}")
 
-async def process_category_list(page: Page, category_id, sub_item_xpath):
-    """Iterates through every item found in a category-specific list page."""
+async def processCategoryList(page: Page, category_id, sub_item_xpath):
+    """Iterates through every item found in a category folder."""
     sub_items = page.locator(f'xpath={sub_item_xpath}')
     try:
         await sub_items.first.wait_for(state="attached", timeout=10000)
-    except:
-        return
+    except: return
 
     count = await sub_items.count()
-    print(f"Processing category list with {count} items")
+    print(f"Processing folder with {count} items")
 
     for i in range(count):
         try:
-            # Re-locate to avoid stale elements after navigation
             item = page.locator(f'xpath={sub_item_xpath}').nth(i)
             await item.wait_for(state="attached")
 
-            # Download item thumbnail
-            img_path = await download_media(page, item, f"category_{category_id}_item_{i}")
+            img_path = await downloadMedia(page, item, f"cat_{category_id}_item_{i}")
 
-            # Navigate into item details
             await item.click()
             await page.wait_for_load_state("networkidle")
 
-            # Scrape metadata and link the image
-            await scrape_item_details(page, category_id, img_path)
+            await childPage(page, category_id, img_path)
 
-            # Return to list
             await page.go_back()
             await page.wait_for_selector(f'xpath={sub_item_xpath}', timeout=10000)
         except Exception as e:
             print(f"Error on sub-item {i}: {e}")
-            # Exit if we are completely lost
             if page.url == BASE_URL: break
 
-async def process_section(page: Page, xpath, name):
-    """Processes a major section on the homepage (like 'Featured', 'New Releases', etc.)."""
+async def processSection(page: Page, xpath, name):
+    """Processes a major section (Categories, Featured, Reality)."""
     print(f"--- Section: {name} ---")
     container = page.locator(f'xpath={xpath}')
     await container.wait_for(state="attached", timeout=15000)
@@ -214,71 +227,61 @@ async def process_section(page: Page, xpath, name):
     count = await container.locator('xpath=./div').count()
     for i in range(count):
         try:
-            # Re-locate container and nth item
-            container_locator = page.locator(f'xpath={xpath}/div')
-            item = container_locator.nth(i)
+            item = page.locator(f'xpath={xpath}/div').nth(i)
             await item.wait_for(state="attached")
 
-            # Capture section image
-            img_path = await download_media(page, item, f"section_{name}_{i}")
+            img_path = await downloadMedia(page, item, f"section_{name}_{i}")
 
-            # Enter the item/category
             await item.click()
             await page.wait_for_load_state("networkidle")
 
-            # Check if we landed on a category list or a specific item details page
-            # Category pages usually have a title div at this specific XPath
+            # Check if it is a category list or direct item
             cat_title_loc = page.locator('xpath=//*[@id="main-app"]/div[2]/div[2]/main/div[2]/div/div')
             if await cat_title_loc.count() > 0:
                 cat_name = await cat_title_loc.inner_text()
-                cid = save_category(cat_name)
+                cid = saveCategory(cat_name)
                 
-                # Determine sub-item path (varies by section structure)
                 sub_path = '//*[@id="main-app"]/div[2]/div[2]/main/div[3]/div/div/div/div'
                 if name != "Categories":
                     sub_path = '//*[@id="main-app"]/div[2]/div[2]/main/div[2]/div/div/div/div'
 
-                await process_category_list(page, cid, sub_path)
+                await processCategoryList(page, cid, sub_path)
             else:
-                # Direct item page
-                cid = save_category(name)
-                await scrape_item_details(page, cid, img_path)
+                cid = saveCategory(name)
+                await childPage(page, cid, img_path)
 
-            # Return to homepage to continue with next item
-            await page.go_back()
-            # If go_back doesn't work well, page.goto(BASE_URL) could be used but is slower
-            await container.wait_for(state="attached", timeout=10000)
-        except Exception as e:
-            print(f"Error on section item {i}: {e}")
-            await page.goto(BASE_URL)
+            await page.goto(BASE_URL, wait_until="networkidle")
             await scroll_page(page)
+            await page.locator(f'xpath={xpath}').wait_for(state="attached")
+        except Exception as e:
+            print(f"Error on item {i}: {e}")
+            await page.goto(BASE_URL)
 
+#####################################
+#main scrap
 async def run_scraper():
-    """Main setup and execution flow for the Exxen scraper."""
+    """Main execution point for the Exxen scraper."""
     async with async_playwright() as p:
-        print("Launching professional scraper...")
+        print("Launching browser...")
         browser = await p.chromium.launch(headless=True)
-        # Use a real User-Agent to avoid detection
         context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         page = await context.new_page()
 
         # Apply stealth patches
         await Stealth().apply_stealth_async(page)
 
-        print(f"Navigating to {BASE_URL}")
+        print(f"Opening {BASE_URL}")
         await page.goto(BASE_URL, wait_until="networkidle")
 
-        # Clear cookie consent banner
+        # Clear cookie popup
         try:
             btn = page.get_by_text("Accept necessary only", exact=True)
-            if await btn.is_visible(timeout=3000):
-                await btn.click()
-                print("Cookies accepted.")
+            if await btn.is_visible(timeout=3000): await btn.click()
         except: pass
 
         await scroll_page(page)
 
-        # Homepage sections and their XPaths
+        # Main sections
         sections = [
             ('//*[@id="main-app"]/div[2]/main/div/div[4]/div/div[1]/div', "Categories"),
             ('//*[@id="main-app"]/div[2]/main/div/div[3]/div/div[1]/div', "Featured"),
@@ -287,12 +290,12 @@ async def run_scraper():
 
         for xpath, name in sections:
             try:
-                await process_section(page, xpath, name)
+                await processSection(page, xpath, name)
             except Exception as e:
                 print(f"Section {name} failed: {e}")
 
         await browser.close()
-        print("Scraping operation finished.")
+        print("Scraping finished!")
 
 if __name__ == "__main__":
     asyncio.run(run_scraper())
