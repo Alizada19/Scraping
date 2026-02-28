@@ -11,8 +11,6 @@ import psycopg2
 import json
 
 
-
-
 os.makedirs("hotel_images", exist_ok=True)
 
 #postgresql connection
@@ -493,7 +491,7 @@ async def eachCategory(page, parentPath, totalCategories):
 
         if not success:
             print(f"Category {i+1} could not be scraped after {max_attempts} attempts, skipping.")
-        break        
+                
 #####################################
 #main scrap
 async def run_scraper():
