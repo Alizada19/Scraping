@@ -54,8 +54,7 @@ python exxen.py
 
 - `exxen.py`: The main scraper script containing the scraping logic and database connection functions.
 - `requirements.txt`: Lists all Python dependencies.
-- `hotel_images/`: (Created at runtime) Directory where downloaded images are stored.
-- `full_page.png`: A screenshot captured during the scraper's execution for verification.
+- `images/`: (Created at runtime) Directory where downloaded images are stored.
 
 ## Configuration
 
