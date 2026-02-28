@@ -1,6 +1,6 @@
 # Exxen Scraper Project
 
-A robust web scraping application for extracting movie and series categories, details, and metadata from [Exxen.com](https://www.exxen.com/). The scraper uses Playwright with stealth mechanisms to bypass bot detection and supports data persistence via PostgreSQL.
+A robust web scraping application make by Ali Alizada for extracting movie and series categories, details, and metadata from [Exxen.com](https://www.exxen.com/). The scraper uses Playwright with stealth mechanisms to bypass bot detection and supports data persistence via PostgreSQL.
 
 ## Features
 
