@@ -1,0 +1,19 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local configuration file
+.env
+
+# Output data
+exxen_data.json
+exxen_images/
+
+# Playwright screenshots/logs
+*.png
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db

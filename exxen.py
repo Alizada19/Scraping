@@ -11,7 +11,7 @@ import psycopg2
 import json
 
 
-os.makedirs("hotel_images", exist_ok=True)
+os.makedirs("exxen_images", exist_ok=True)
 
 
 async def configure_stealth_browser(page):
